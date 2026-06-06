@@ -2,11 +2,6 @@
   # Declares flake inputs
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
-    cosmic = {
-      # url = "github:0xnryn/cosmic";
-      url = "path:/home/sudha/cosmic";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
     home-manager = {
       url = "github:nix-community/home-manager";
       inputs.nixpkgs.follows = "nixpkgs";
