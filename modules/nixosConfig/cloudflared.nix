@@ -1,5 +1,8 @@
-{ config, pkgs, ... }: {
-  
+{ inputs, config, pkgs, ... }: {
+
+  imports = [
+    inputs.cosmic.flakeModules.default
+  ];
   # Declare the requirement to the Cosmic Engine
   cosmicage.secrets."cloudflare" = {
     # Systemd reads EnvironmentFiles as root before passing them to the service.
