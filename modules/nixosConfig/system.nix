@@ -1,7 +1,9 @@
-{ ... }:
+{ inputs, ... }:
 {
   flake.nixosModules.system = { pkgs, config, inputs, ... }: {
-
+    imports = [
+      inputs.agenix.nixosModules.default
+    ];
     nix.settings = {
       experimental-features = [ "nix-command" "flakes" "pipe-operators" ];
       trusted-users = [ "root" "sudha" ];
