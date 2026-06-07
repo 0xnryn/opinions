@@ -53,6 +53,10 @@
       url = "github:BirdeeHub/nix-wrapper-modules";
       inputs.nixpkgs.follows = "nixpkgs";
     }; 
+    helium = {
+      url = "github:schembriaiden/helium-browser-nix-flake";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
   outputs = inputs:
   inputs.flake-parts.lib.mkFlake { inherit inputs; } {
