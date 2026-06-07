@@ -10,6 +10,8 @@
       };
     };
 
+    systemd.coredump.enable = true;
+
     # 1. The KDE Connect Fix (Firewall handling)
     programs.kdeconnect.enable = true;
 
@@ -48,5 +50,11 @@
       # Forces Chromium/Electron apps to use native Wayland
       NIXOS_OZONE_WL = "1";
     };
+  };
+  
+  flake.homeModules.plasma = { config, pkgs, ... }:{
+    home.activation.refreshKDEAppMenu = config.lib.dag.entryAfter ["writeBoundary"] ''
+      $DRY_RUN_CMD ${pkgs.kdePackages.kservice}/bin/kbuildsycoca6 --noincremental || true
+    '';
   };
 }
