@@ -53,6 +53,7 @@
       ssh-to-age
       age-plugin-tpm
       sbctl
+      inputs.sops-nix.nixosModules.sops
     ];
   };
 }
