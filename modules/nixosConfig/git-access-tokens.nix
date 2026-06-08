@@ -1,6 +1,9 @@
 { ... }: 
 {
   flake.nixosModules."git-access-tokens" = { config, lib, ... }: {
+
+    # In sudhalaptop.nix
+    cosmicage.secrets."git-access-tokens".file = "git-access-tokens.age";
     
     # Use lib.mkDefault so any machine can easily override these settings
     cosmicage.secrets."git-access-tokens" = {
