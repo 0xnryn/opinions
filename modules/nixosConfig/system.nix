@@ -1,6 +1,9 @@
 { inputs, ... }:
 {
   flake.nixosModules.system = { pkgs, config, inputs, ... }: {
+    imports = [
+      inputs.sops-nix.nixosModules.sops
+    ];
     nix.settings = {
       experimental-features = [ "nix-command" "flakes" "pipe-operators" ];
       trusted-users = [ "root" "sudha" ];
@@ -53,7 +56,6 @@
       ssh-to-age
       age-plugin-tpm
       sbctl
-      inputs.sops-nix.nixosModules.sops
     ];
   };
 }
