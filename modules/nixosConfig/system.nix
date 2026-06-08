@@ -1,9 +1,6 @@
 { inputs, ... }:
 {
   flake.nixosModules.system = { pkgs, config, inputs, ... }: {
-    imports = [
-      inputs.agenix.nixosModules.default
-    ];
     nix.settings = {
       experimental-features = [ "nix-command" "flakes" "pipe-operators" ];
       trusted-users = [ "root" "sudha" ];
@@ -56,7 +53,6 @@
       ssh-to-age
       age-plugin-tpm
       sbctl
-      inputs.agenix.packages.${pkgs.stdenv.hostPlatform.system}.default
     ];
   };
 }
