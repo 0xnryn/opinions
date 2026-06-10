@@ -2,7 +2,7 @@
 {
   flake.nixosModules.ollama_cuda = { pkgs, ... }:
   {
-    sservices.ollama = {
+    services.ollama = {
       enable = true;
       
       # Explicitly use the CUDA-compiled package instead of the acceleration flag
