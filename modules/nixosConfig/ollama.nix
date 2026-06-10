@@ -3,16 +3,14 @@
   flake.nixosModules.ollama_cuda = { pkgs, ... }:
   {
     services.ollama = {
-      enable = true;
-      acceleration = "cuda";
-      
-      # Force Ollama to ignore the integrated graphics and only use the dGPU
-      environmentVariables = {
-        CUDA_VISIBLE_DEVICES = "0";
-        
-        # If your system ever falls back to Vulkan, lock that too:
-        GGML_VK_VISIBLE_DEVICES = "0";
-      };
+    enable = true;
+    
+    # Explicitly use the CUDA-compiled package instead of the acceleration flag
+    package = pkgs.ollama-cuda; 
+    
+    environmentVariables = {
+      CUDA_VISIBLE_DEVICES = "0";
+      GGML_VK_VISIBLE_DEVICES = "0";
     };
   };
 
