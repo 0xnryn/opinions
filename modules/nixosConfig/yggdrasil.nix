@@ -21,8 +21,8 @@ in
   config = mkIf cfg.enable {
     
     networking.firewall = {
-      allowedTCPPorts = [ 53535 ];
-      allowedUDPPorts = [ 53535 ];
+      allowedTCPPorts = [ 53535 9001];
+      allowedUDPPorts = [ 53535 9001];
     };
 
     services.yggdrasil = {
