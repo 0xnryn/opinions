@@ -1,6 +1,6 @@
 { ... }:
 {
-  flake.nixosModules.sudha.yggdrasil = { config, ... }: {
+  flake.nixosModules.sudha-yggdrasil = { config, ... }: {
     networking.firewall = {
       allowedTCPPorts = [ 53535 9001];
       allowedUDPPorts = [ 53535 9001];
