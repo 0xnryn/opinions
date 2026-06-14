@@ -1,30 +1,11 @@
-{ config, lib, ... }:
-
-with lib;
-
-let
-  # You define your custom namespace path here
-  cfg = config.cosmic.sudha.opinions.services.yggdrasil;
-in
+{ ... }:
 {
-  # The options MUST match the exact path you used in 'cfg'
-  options.cosmic.sudha.opinions.services.yggdrasil = {
-    enable = mkEnableOption "Enable Sudha's opinionated Yggdrasil mesh (Cosmic Engine)";
-    
-    privateKeyPath = mkOption { 
-      type = types.str; 
-      description = "Absolute path to the Yggdrasil private key";
-    };
-  };
-
-  # Now cfg.enable and cfg.privateKeyPath will work flawlessly
-  config = mkIf cfg.enable {
-    
+  flake.nixosModules.cosmic.sudha.yggdrasil = { ... }: {
     networking.firewall = {
       allowedTCPPorts = [ 53535 9001];
       allowedUDPPorts = [ 53535 9001];
     };
-
+  
     services.yggdrasil = {
       enable = true;
       openMulticastPort = true;
