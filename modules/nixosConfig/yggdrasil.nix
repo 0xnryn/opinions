@@ -1,6 +1,6 @@
 { ... }:
 {
-  flake.nixosModules.cosmic.sudha.yggdrasil = { ... }: {
+  flake.nixosModules.cosmic.sudha.yggdrasil = { config, ... }: {
     networking.firewall = {
       allowedTCPPorts = [ 53535 9001];
       allowedUDPPorts = [ 53535 9001];
@@ -12,7 +12,7 @@
       settings = {
         IfName = "ygg0";
         Listen = [ "tcp://0.0.0.0:53535" ];
-        PrivateKeyPath = cfg.privateKeyPath; 
+        PrivateKeyPath = config.sops.secrets."yggdrasil".path; 
         NodeInfoPrivacy = true;
         Peers = [
           #india
