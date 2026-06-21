@@ -5,7 +5,7 @@
     virtualisation.oci-containers = {
       backend = "docker";
       
-      containers."tb-postgres-pbramb" = {
+      containers."protoplast_tb_posgres" = {
         image = "protoplaststudio/tb-postgres:latest"; 
         
         ports = [
