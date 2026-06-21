@@ -11,7 +11,7 @@
         ports = [
           # Bind strictly to localhost for Cloudflare Tunnel. 
           # No public ports exposed. HTTP only.
-          "127.0.0.1:9090:8080" 
+          "127.0.0.1:9090:9090" 
         ];
 
         environment = {
