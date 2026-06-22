@@ -51,13 +51,18 @@
       wants = [ "network-online.target" ];
       serviceConfig = {
         Type = "oneshot";
-        # Use a shell script to gate the logic. 
-        # If 'psql' finds the table, exit 0 (success/skip).
-        # If 'psql' fails, it means we need to init, so we proceed.
-        ExecStartPre = pkgs.writeShellScript "check-tb-init" ''
-          ${pkgs.postgresql_18}/bin/psql -U thingsboard -d thingsboard -c 'SELECT 1 FROM device LIMIT 1' && exit 0 || exit 1
+        # ExecCondition (not ExecStartPre): lets the unit cleanly "skip" with
+        # a success result, rather than failing, when no init is needed.
+        ExecCondition = pkgs.writeShellScript "check-tb-init" ''
+          if ${pkgs.postgresql_18}/bin/psql -U thingsboard -d thingsboard -c 'SELECT 1 FROM device LIMIT 1' >/dev/null 2>&1; then
+            # device table exists -> already initialized -> skip (clean success)
+            exit 1
+          else
+            # device table missing -> needs init -> proceed to ExecStart
+            exit 0
+          fi
         '';
-        
+    
         ExecStart = "${pkgs.docker}/bin/docker run --rm " +
                     "--env INSTALL_TB=true --env LOAD_DEMO=false " +
                     "--env-file ${config.sops.templates."tb-db.env".path} " +
