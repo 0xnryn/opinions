@@ -38,6 +38,25 @@
       echo "ERROR: Secret file $SQL_SCRIPT was not found within 10 seconds!"
       exit 1 # Failure causes the service to stay in a 'failed' state so you can debug
     '';
+
+    systemd.services.tb-init = {
+      description = "ThingsBoard Database Initializer";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "postgresql.service" ];
+      serviceConfig = {
+        Type = "oneshot";
+        # If this returns 0 (found), the '!' negates it and skips the service
+        ExecStartPre = "${pkgs.postgresql_18}/bin/psql -h 172.17.0.1 -U thingsboard -d thingsboard -c 'SELECT 1 FROM device LIMIT 1'";
+        
+        # If ExecStartPre fails (table missing), this runs
+        ExecStart = "${pkgs.docker}/bin/docker run --rm " +
+                    "--env INSTALL_TB=true --env LOAD_DEMO=false " +
+                    "--env-file ${config.sops.templates."tb-db.env".path} " +
+                    "--env SPRING_DATASOURCE_URL=jdbc:postgresql://172.17.0.1:5432/thingsboard " +
+                    "--env SPRING_DATASOURCE_USERNAME=thingsboard " +
+                    "protoplaststudio/tb-node:latest";
+      };
+    };
     
     virtualisation.oci-containers = {
       backend = "docker";
