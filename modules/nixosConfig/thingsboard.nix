@@ -57,8 +57,10 @@
       wants = [ "network-online.target" ];
       serviceConfig = {
         Type = "oneshot";
-        # ExecCondition (not ExecStartPre): lets the unit cleanly "skip" with
-        # a success result, rather than failing, when no init is needed.
+        
+        # --- THE FIX ---
+        # Removed "-h 172.17.0.1" from psql. 
+        # This forces the check to use the lightning-fast, local Unix socket!
         ExecCondition = pkgs.writeShellScript "check-tb-init" ''
           if ${pkgs.postgresql_18}/bin/psql -U thingsboard -d thingsboard -c 'SELECT 1 FROM device LIMIT 1' >/dev/null 2>&1; then
             # device table exists -> already initialized -> skip (clean success)
@@ -69,6 +71,8 @@
           fi
         '';
     
+        # The Docker container still uses the TCP bridge, which is correct because 
+        # inside the container, it's isolated from the host's Unix socket.
         ExecStart = "${pkgs.docker}/bin/docker run --rm " +
                     "--env INSTALL_TB=true --env LOAD_DEMO=false " +
                     "--env-file ${config.sops.templates."tb-db.env".path} " +
@@ -77,7 +81,7 @@
                     "protoplaststudio/tb-node:latest";
       };
     };
-    
+        
     virtualisation.oci-containers = {
       backend = "docker";
       
