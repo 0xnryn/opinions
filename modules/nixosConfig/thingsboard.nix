@@ -45,10 +45,13 @@
       after = [ "postgresql.service" ];
       serviceConfig = {
         Type = "oneshot";
-        # If this returns 0 (found), the '!' negates it and skips the service
-        ExecStartPre = "${pkgs.postgresql_18}/bin/psql -h 172.17.0.1 -U thingsboard -d thingsboard -c 'SELECT 1 FROM device LIMIT 1'";
+        # Use a shell script to gate the logic. 
+        # If 'psql' finds the table, exit 0 (success/skip).
+        # If 'psql' fails, it means we need to init, so we proceed.
+        ExecStartPre = pkgs.writeShellScript "check-tb-init" ''
+          ${pkgs.postgresql_18}/bin/psql -h 172.17.0.1 -U thingsboard -d thingsboard -c 'SELECT 1 FROM device LIMIT 1' && exit 0 || exit 1
+        '';
         
-        # If ExecStartPre fails (table missing), this runs
         ExecStart = "${pkgs.docker}/bin/docker run --rm " +
                     "--env INSTALL_TB=true --env LOAD_DEMO=false " +
                     "--env-file ${config.sops.templates."tb-db.env".path} " +
