@@ -43,7 +43,7 @@
       backend = "docker";
       
       containers = {
-        "protoplast_tb_node_init" = {
+        "protoplast_tb_node" = {
           image = "protoplaststudio/tb-node:latest";
           ports = [ "9090:9090" ];
           environment = {
@@ -53,22 +53,6 @@
             # THIS IS THE KEY: ThingsBoard handles the init internally if this is set
             "INSTALL_TB" = "true";
             "LOAD_DEMO" = "false";
-          };
-          environmentFiles = [ config.sops.templates."tb-db.env".path ];
-        };
-        "protoplast_tb_node" = {
-          image = "protoplaststudio/tb-node:latest"; 
-          
-          ports = [
-            "127.0.0.1:9090:9090" 
-          ];
-  
-          environment = {
-            # --- DATABASE CONNECTION: HOST-MANAGED ---
-            "DATABASE_ENTITIES_TYPE" = "sql";
-            "SPRING_DATASOURCE_URL" = "jdbc:postgresql://172.17.0.1:5432/thingsboard";
-            "SPRING_DATASOURCE_USERNAME" = "thingsboard";
-            # Add your password here if you set one in services.postgresql.authentication
             "SQL_TTL_TELEMETRY_ENABLED" = "true";
             "SQL_TTL_TELEMETRY_TTL" = "2592000";   # 30 days
             "SQL_TTL_ERROR_EVENTS_TTL" = "604800";   # 7 days
@@ -78,10 +62,6 @@
           environmentFiles = [ config.sops.templates."tb-db.env".path ];
         };
       };
-    };
-    systemd.services."docker-protoplast_tb_postgres" = {
-      after = [ "docker-protoplast_tb_init.service" ];
-      wants = [ "docker-protoplast_tb_init.service" ];
     };
   };
 }
