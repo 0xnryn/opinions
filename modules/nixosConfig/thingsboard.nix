@@ -88,7 +88,7 @@
       containers = {
         "protoplast_tb_node" = {
           image = "protoplaststudio/tb-node:latest";
-          ports = [ "9090:9090" ];
+          ports = [ "9090:8080" ];
           environment = {
             "DATABASE_ENTITIES_TYPE" = "sql";
             "SPRING_DATASOURCE_URL" = "jdbc:postgresql://172.17.0.1:5432/thingsboard";
