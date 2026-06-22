@@ -1,112 +1,34 @@
 {
-  flake.nixosModules.protoplast_tb = { config, pkgs, ... }:
+  flake.nixosModules.protoplast_tb_postgres = { config, pkgs, ... }:
   {
-    sops.templates."tb-db.env".content = ''
-      SPRING_DATASOURCE_PASSWORD=${config.sops.placeholder.tb_db_password}
-    '';
-
-    sops.templates."set-tb-password.sql" = {
-      content = ''
-        ALTER ROLE thingsboard WITH PASSWORD '${config.sops.placeholder.tb_db_password}';
-        GRANT ALL ON SCHEMA public TO thingsboard;
-        ALTER ROLE thingsboard SET search_path = public;
-      '';
-      owner = "postgres";
-    };
-
-    services.postgresql = {
-      ensureDatabases = [ "thingsboard" ];
-      ensureUsers = [{
-        name = "thingsboard";
-        ensureDBOwnership = true;
-      }];
-    };
-
-    systemd.services."docker-protoplast_tb_node" = {
-      after = [ "postgresql.service" "tb-init.service" ];
-      wants = [ "postgresql.service" "tb-init.service" ];
-    };
-
-    
-
-    systemd.services.postgresql.postStart = pkgs.lib.mkAfter ''
-      # Define the path explicitly to avoid $PSQL variable issues
-      PSQL_BIN="${pkgs.postgresql_18}/bin/psql"
-      SQL_SCRIPT="${config.sops.templates."set-tb-password.sql".path}"
-
-      echo "Waiting for secret file: $SQL_SCRIPT"
-      
-      # Hardened loop: Check up to 10 seconds for the file to be ready
-      for i in {1..10}; do
-        if [ -f "$SQL_SCRIPT" ]; then
-          echo "Secret found. Applying SQL configuration..."
-          $PSQL_BIN -f "$SQL_SCRIPT"
-          exit 0 # Success
-        fi
-        sleep 1
-      done
-
-      echo "ERROR: Secret file $SQL_SCRIPT was not found within 10 seconds!"
-      exit 1 # Failure causes the service to stay in a 'failed' state so you can debug
-    '';
-
-    systemd.services.tb-init = {
-      description = "ThingsBoard Database Initializer";
-      wantedBy = [ "multi-user.target" ];
-      after = [ "postgresql.service" "network-online.target" ];
-      wants = [ "network-online.target" ];
-      serviceConfig = {
-        Type = "oneshot";
-        
-        # --- THE FIX ---
-        # Removed "-h 172.17.0.1" from psql. 
-        # This forces the check to use the lightning-fast, local Unix socket!
-        ExecCondition = pkgs.writeShellScript "check-tb-init" ''
-          if ${pkgs.postgresql_18}/bin/psql -U thingsboard -d thingsboard -c 'SELECT 1 FROM device LIMIT 1' >/dev/null 2>&1; then
-            # device table exists -> already initialized -> skip (clean success)
-            exit 1
-          else
-            # device table missing -> needs init -> proceed to ExecStart
-            exit 0
-          fi
-        '';
-    
-        # The Docker container still uses the TCP bridge, which is correct because 
-        # inside the container, it's isolated from the host's Unix socket.
-        ExecStart = "${pkgs.docker}/bin/docker run --rm " +
-                    "--env INSTALL_TB=true --env LOAD_DEMO=false " +
-                    "--env-file ${config.sops.templates."tb-db.env".path} " +
-                    "--env SPRING_DATASOURCE_URL=jdbc:postgresql://172.17.0.1:5432/thingsboard " +
-                    "--env SPRING_DATASOURCE_USERNAME=thingsboard " +
-                    "protoplaststudio/tb-node:latest";
-      };
-    };
-        
     virtualisation.oci-containers = {
       backend = "docker";
-      
-      containers = {
-        "protoplast_tb_node" = {
-          image = "protoplaststudio/tb-node:latest";
-          ports = [ "9090:8080" ];
-          volumes = [
-            "tb-data:/data"
-            "tb-logs:/var/log/thingsboard"
-          ];
-          environment = {
-            "DATABASE_ENTITIES_TYPE" = "sql";
-            "SPRING_DATASOURCE_URL" = "jdbc:postgresql://172.17.0.1:5432/thingsboard";
-            "SPRING_DATASOURCE_USERNAME" = "thingsboard";
-            # THIS IS THE KEY: ThingsBoard handles the init internally if this is set
-            "SQL_TTL_TELEMETRY_ENABLED" = "true";
-            "SQL_TTL_TELEMETRY_TTL" = "2592000";   # 30 days
-            "SQL_TTL_ERROR_EVENTS_TTL" = "604800";   # 7 days
-            "SQL_TTL_DEBUG_EVENTS_TTL" = "604800";   # 7 days
-            "SQL_TTL_AUDIT_LOGS_TTL" = "2592000";    # 30 days
-          };
-          environmentFiles = [ config.sops.templates."tb-db.env".path ];
+      containers."protoplast_tb_postgres" = {
+        image = "protoplaststudio/tb-postgres:latest"; 
+        ports = [
+          "127.0.0.1:9090:9090" 
+        ];
+        environment = {
+          "SQL_TTL_TELEMETRY_ENABLED" = "true";
+          "SQL_TTL_TELEMETRY_TTL" = "2592000";     # 30 days
+          "SQL_TTL_ERROR_EVENTS_TTL" = "604800";   # 7 days
+          "SQL_TTL_DEBUG_EVENTS_TTL" = "604800";   # 7 days
+          "SQL_TTL_AUDIT_LOGS_TTL" = "2592000";    # 30 days
         };
+        volumes = [
+          # 1. Core Data: Holds the PostgreSQL database, extensions, and configs
+          "/var/lib/thingsboard/data:/data"
+          # 2. Diagnostics: Holds persistent application logs for debugging
+          "/var/lib/thingsboard/logs:/var/log/thingsboard"
+        ];
       };
     };
+    systemd.tmpfiles.rules = [
+      "d /var/lib/thingsboard/data 0775 799 799 -" 
+      "d /var/lib/thingsboard/logs 0775 799 799 -" 
+    ];
+    # HTTP-only via Cloudflare. Zero external firewall ports needed.
+    networking.firewall.allowedTCPPorts = [];
+    networking.firewall.allowedUDPPorts = []; 
   };
 }
