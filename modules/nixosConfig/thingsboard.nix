@@ -18,6 +18,11 @@
       }];
     };
 
+    systemd.services."docker-protoplast_tb_node" = {
+      after = [ "postgresql.service" "tb-init.service" ];
+      wants = [ "postgresql.service" "tb-init.service" ];
+    };
+
     systemd.services.postgresql.postStart = pkgs.lib.mkAfter ''
       # Define the path explicitly to avoid $PSQL variable issues
       PSQL_BIN="${pkgs.postgresql_18}/bin/psql"
@@ -42,14 +47,15 @@
     systemd.services.tb-init = {
       description = "ThingsBoard Database Initializer";
       wantedBy = [ "multi-user.target" ];
-      after = [ "postgresql.service" ];
+      after = [ "postgresql.service" "network-online.target" ];
+      wants = [ "network-online.target" ];
       serviceConfig = {
         Type = "oneshot";
         # Use a shell script to gate the logic. 
         # If 'psql' finds the table, exit 0 (success/skip).
         # If 'psql' fails, it means we need to init, so we proceed.
         ExecStartPre = pkgs.writeShellScript "check-tb-init" ''
-          ${pkgs.postgresql_18}/bin/psql -h 172.17.0.1 -U thingsboard -d thingsboard -c 'SELECT 1 FROM device LIMIT 1' && exit 0 || exit 1
+          ${pkgs.postgresql_18}/bin/psql -U thingsboard -d thingsboard -c 'SELECT 1 FROM device LIMIT 1' && exit 0 || exit 1
         '';
         
         ExecStart = "${pkgs.docker}/bin/docker run --rm " +
