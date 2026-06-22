@@ -6,7 +6,11 @@
     '';
 
     sops.templates."set-tb-password.sql" = {
-      content = "ALTER ROLE thingsboard WITH PASSWORD '${config.sops.placeholder.tb_db_password}';";
+      content = ''
+        ALTER ROLE thingsboard WITH PASSWORD '${config.sops.placeholder.tb_db_password}';
+        GRANT ALL ON SCHEMA public TO thingsboard;
+        ALTER ROLE thingsboard SET search_path = public;
+      '';
       owner = "postgres";
     };
 
@@ -22,6 +26,8 @@
       after = [ "postgresql.service" "tb-init.service" ];
       wants = [ "postgresql.service" "tb-init.service" ];
     };
+
+    
 
     systemd.services.postgresql.postStart = pkgs.lib.mkAfter ''
       # Define the path explicitly to avoid $PSQL variable issues
@@ -84,8 +90,6 @@
             "SPRING_DATASOURCE_URL" = "jdbc:postgresql://172.17.0.1:5432/thingsboard";
             "SPRING_DATASOURCE_USERNAME" = "thingsboard";
             # THIS IS THE KEY: ThingsBoard handles the init internally if this is set
-            "INSTALL_TB" = "true";
-            "LOAD_DEMO" = "false";
             "SQL_TTL_TELEMETRY_ENABLED" = "true";
             "SQL_TTL_TELEMETRY_TTL" = "2592000";   # 30 days
             "SQL_TTL_ERROR_EVENTS_TTL" = "604800";   # 7 days
