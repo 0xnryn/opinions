@@ -43,17 +43,20 @@
       backend = "docker";
       
       containers = {
-        "protoplast_tb_init" = {
+        "protoplast_tb_node_init" = {
           image = "protoplaststudio/tb-node:latest";
-          cmd = [ "install-db.sh" "--loadDemo=false" ];
+          ports = [ "9090:9090" ];
           environment = {
             "DATABASE_ENTITIES_TYPE" = "sql";
             "SPRING_DATASOURCE_URL" = "jdbc:postgresql://172.17.0.1:5432/thingsboard";
             "SPRING_DATASOURCE_USERNAME" = "thingsboard";
+            # THIS IS THE KEY: ThingsBoard handles the init internally if this is set
+            "INSTALL_TB" = "true";
+            "LOAD_DEMO" = "false";
           };
           environmentFiles = [ config.sops.templates."tb-db.env".path ];
         };
-        "protoplast_tb_postgres" = {
+        "protoplast_tb_node" = {
           image = "protoplaststudio/tb-node:latest"; 
           
           ports = [
