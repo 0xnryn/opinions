@@ -19,7 +19,24 @@
     };
 
     systemd.services.postgresql.postStart = pkgs.lib.mkAfter ''
-      $PSQL -f ${config.sops.templates."set-tb-password.sql".path}
+      # Define the path explicitly to avoid $PSQL variable issues
+      PSQL_BIN="${pkgs.postgresql_18}/bin/psql"
+      SQL_SCRIPT="${config.sops.templates."set-tb-password.sql".path}"
+
+      echo "Waiting for secret file: $SQL_SCRIPT"
+      
+      # Hardened loop: Check up to 10 seconds for the file to be ready
+      for i in {1..10}; do
+        if [ -f "$SQL_SCRIPT" ]; then
+          echo "Secret found. Applying SQL configuration..."
+          $PSQL_BIN -f "$SQL_SCRIPT"
+          exit 0 # Success
+        fi
+        sleep 1
+      done
+
+      echo "ERROR: Secret file $SQL_SCRIPT was not found within 10 seconds!"
+      exit 1 # Failure causes the service to stay in a 'failed' state so you can debug
     '';
     
     virtualisation.oci-containers = {
