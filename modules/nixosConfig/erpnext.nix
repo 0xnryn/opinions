@@ -62,6 +62,10 @@
       erpnext-init = {
         image = frappeImage;
         dependsOn = [ "erpnext-db" "erpnext-redis-cache" "erpnext-redis-queue" ];
+        environment = {
+          "DB_HOST" = "erpnext-db";
+          "DB_PORT" = "3306";
+        };
         volumes = [
           "/var/lib/erpnext/sites:/home/frappe/frappe-bench/sites"
           "/var/lib/erpnext/logs:/home/frappe/frappe-bench/logs"
