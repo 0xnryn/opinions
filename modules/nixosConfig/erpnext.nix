@@ -72,7 +72,13 @@
         ];
         extraOptions = [ "--network=frappe_network" ];
         entrypoint = "/bin/bash";
+        
         cmd = [ "-c" ''
+          # THE FIX: Create the JSON file if it doesn't exist so 'bench set-config' doesn't crash
+          if [ ! -f sites/common_site_config.json ]; then
+            echo "{}" > sites/common_site_config.json
+          fi
+  
           ls -1 apps > sites/apps.txt;
           bench set-config -g db_host erpnext-db;
           bench set-config -gp db_port 3306;
@@ -82,8 +88,9 @@
           bench set-config -gp socketio_port 9000;
           
           if [ ! -d sites/frontend ]; then
-            echo "Waiting 10s for DB..."; sleep 10;
+            echo "Waiting 15s for DB..."; sleep 15;
             bench new-site frontend \
+              --db-host erpnext-db \
               --mariadb-user-host-login-scope='%' \
               --admin-password=${defaultPass} \
               --db-root-username=root \
@@ -170,7 +177,7 @@
           "PROXY_READ_TIMEOUT" = "120";
           "CLIENT_MAX_BODY_SIZE" = "50m";
         };
-        ports = [ "8080:8080" ];
+        ports = [ "127.0.0.1:8080:8080" ];
         volumes = [
           "/var/lib/erpnext/sites:/home/frappe/frappe-bench/sites"
           "/var/lib/erpnext/logs:/home/frappe/frappe-bench/logs"
