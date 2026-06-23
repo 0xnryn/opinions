@@ -14,6 +14,7 @@
           "SQL_TTL_ERROR_EVENTS_TTL" = "604800";   # 7 days
           "SQL_TTL_DEBUG_EVENTS_TTL" = "604800";   # 7 days
           "SQL_TTL_AUDIT_LOGS_TTL" = "2592000";    # 30 days
+          "JAVA_OPTS" = "-Xms256M -Xmx1024M";
         };
         volumes = [
           # 1. Core Data: Holds the PostgreSQL database, extensions, and configs
