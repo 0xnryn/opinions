@@ -166,7 +166,7 @@
           "PROXY_READ_TIMEOUT" = "120";
           "CLIENT_MAX_BODY_SIZE" = "50m";
         };
-        ports = [ "127.0.0.1:8080:8080" ];
+        ports = [ "8080:8080" ];
         volumes = [
           "/var/lib/erpnext/sites:/home/frappe/frappe-bench/sites"
           "/var/lib/erpnext/logs:/home/frappe/frappe-bench/logs"
