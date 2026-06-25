@@ -33,6 +33,11 @@ sudo docker run --rm \
     echo "Generating app list..."
     ls -1 apps > sites/apps.txt
 
+    echo "Creating common_site_config.json skeleton..."
+    if [ ! -f sites/common_site_config.json ]; then
+        echo "{}" > sites/common_site_config.json
+    fi
+
     echo "Configuring common_site_config.json..."
     bench set-config -g db_host erpnext-db
     bench set-config -gp db_port 3306
@@ -100,7 +105,7 @@ echo "Done! ERPNext should be spinning up normally now."
           "--character-set-server=utf8mb4"
           "--collation-server=utf8mb4_unicode_ci"
           "--skip-character-set-client-handshake"
-          "--innodb-buffer-pool-size=128M" 
+          "--innodb-buffer-pool-size=512M" 
           "--max-connections=50"
         ];
         extraOptions = [ "--network=frappe_network" ];
@@ -123,8 +128,8 @@ echo "Done! ERPNext should be spinning up normally now."
         image = frappeImage;
         dependsOn = [ "erpnext-db" "erpnext-redis-cache" "erpnext-redis-queue" ];
         environment = {
-          "GUNICORN_WORKERS" = "1";
-          "GUNICORN_THREADS" = "2";
+          "GUNICORN_WORKERS" = "3";
+          "GUNICORN_THREADS" = "4";
           "GUNICORN_TIMEOUT" = "120";
         };
         volumes = [
@@ -166,7 +171,7 @@ echo "Done! ERPNext should be spinning up normally now."
         environment = {
           "FRAPPE_REDIS_CACHE" = "redis://erpnext-redis-cache:6379";
           "FRAPPE_REDIS_QUEUE" = "redis://erpnext-redis-queue:6379";
-          "NODE_OPTIONS" = "--max-old-space-size=128";
+          "NODE_OPTIONS" = "--max-old-space-size=256";
         };
         cmd = [ "node" "/home/frappe/frappe-bench/apps/frappe/socketio.js" ];
         volumes = [
