@@ -1,8 +1,78 @@
+/*
+
+# secrets/server.yaml
+erpnext_db_password: "your_secure_database_root_password_here"
+erpnext_admin_password: "your_secure_web_admin_password_here"
+
+=============================================================================
+ERPNext Initialization Script
+=============================================================================
+Run this manually on the host after the system boots for the first time to 
+bootstrap the MariaDB database and create the site_config.json file.
+
+#!/usr/bin/env bash
+
+echo "Fetching ERPNext Secrets from RAM..."
+DB_PASS=$(sudo cat /run/secrets/erpnext_db_password)
+ADMIN_PASS=$(sudo cat /run/secrets/erpnext_admin_password)
+
+echo "Spinning up ephemeral configuration container..."
+sudo docker run --rm \
+  --network=frappe_network \
+  -v /var/lib/erpnext/sites:/home/frappe/frappe-bench/sites \
+  -v /var/lib/erpnext/logs:/home/frappe/frappe-bench/logs \
+  -e DB_PASS="$DB_PASS" \
+  -e ADMIN_PASS="$ADMIN_PASS" \
+  frappe/erpnext:v16.25.0 \
+  bash -c '
+    echo "Waiting for MariaDB and Redis..."
+    wait-for-it -t 120 erpnext-db:3306
+    wait-for-it -t 120 erpnext-redis-cache:6379
+    wait-for-it -t 120 erpnext-redis-queue:6379
+
+    echo "Generating app list..."
+    ls -1 apps > sites/apps.txt
+
+    echo "Configuring common_site_config.json..."
+    bench set-config -g db_host erpnext-db
+    bench set-config -gp db_port 3306
+    bench set-config -g redis_cache "redis://erpnext-redis-cache:6379"
+    bench set-config -g redis_queue "redis://erpnext-redis-queue:6379"
+    bench set-config -g redis_socketio "redis://erpnext-redis-queue:6379"
+    bench set-config -gp socketio_port 9000
+
+    if [ ! -d sites/frontend ]; then
+        echo "Creating new site (frontend)..."
+        bench new-site frontend \
+          --mariadb-user-host-login-scope="%" \
+          --admin-password="$ADMIN_PASS" \
+          --db-root-username=root \
+          --db-root-password="$DB_PASS" \
+          --install-app erpnext \
+          --set-default
+    else
+        echo "Site frontend already exists, skipping creation."
+    fi
+    
+    echo "Initialization complete!"
+  '
+
+echo "Restarting background ERPNext services to apply the new config..."
+sudo systemctl restart \
+  docker-erpnext-backend \
+  docker-erpnext-worker \
+  docker-erpnext-scheduler \
+  docker-erpnext-websocket \
+  docker-erpnext-frontend
+
+echo "Done! ERPNext should be spinning up normally now."
+=============================================================================
+*/
+
 {
   flake.nixosModules.protoplast_erpnext = { config, pkgs, lib, ... }:
   let
-    frappeImage = "frappe/erpnext:v16.23.1";
-    defaultPass = "admin";
+    frappeImage = "frappe/erpnext:v16.25.0";
   in
   {
     systemd.tmpfiles.rules = [
@@ -10,32 +80,22 @@
       "d /var/lib/erpnext/logs 0755 1000 1000 -"
       "d /var/lib/erpnext/mysql 0755 999 999 -" 
       "d /var/lib/erpnext/redis-queue 0755 1000 1000 -"
-      "d /var/lib/thingsboard/data 0775 799 799 -" 
-      "d /var/lib/thingsboard/logs 0775 799 799 -" 
     ];
-  
-    systemd.services."docker-network-frappe" = {
-      description = "Create frappe_network docker bridge";
-      wantedBy = [ "multi-user.target" ];
-      after = [ "docker.service" ];
-      requires = [ "docker.service" ];
-      serviceConfig = { Type = "oneshot"; RemainAfterExit = true; };
-      script = ''${pkgs.docker}/bin/docker network create frappe_network || true'';
-    };
   
     virtualisation.oci-containers.backend = "docker";
     virtualisation.oci-containers.containers = {
   
-      # --- ERPNext Components ---
-  
+      # --- Persistence & Cache ---
       erpnext-db = {
         image = "mariadb:11.8";
+        # Mount the decrypted SOPS secret directly into the container
+        volumes = [ 
+          "/var/lib/erpnext/mysql:/var/lib/mysql" 
+          "/run/secrets/erpnext_db_password:/run/secrets/erpnext_db_password:ro"
+        ];
         environment = {
-          "MYSQL_ROOT_PASSWORD" = defaultPass;
-          "MARIADB_ROOT_PASSWORD" = defaultPass;
+          "MARIADB_ROOT_PASSWORD_FILE" = "/run/secrets/erpnext_db_password";
         };
-        volumes = [ "/var/lib/erpnext/mysql:/var/lib/mysql" ];
-        # RAM OPTIMIZATION: Shrink buffers to 128M and limit connections
         cmd = [
           "--character-set-server=utf8mb4"
           "--collation-server=utf8mb4_unicode_ci"
@@ -48,7 +108,6 @@
   
       erpnext-redis-cache = {
         image = "redis:6.2-alpine";
-        # RAM OPTIMIZATION: Cap cache to 128mb, evict old data if full
         cmd = [ "redis-server" "--maxmemory" "128mb" "--maxmemory-policy" "allkeys-lru" ];
         extraOptions = [ "--network=frappe_network" ];
       };
@@ -59,58 +118,14 @@
         extraOptions = [ "--network=frappe_network" ];
       };
   
-      erpnext-init = {
-        image = frappeImage;
-        dependsOn = [ "erpnext-db" "erpnext-redis-cache" "erpnext-redis-queue" ];
-        environment = {
-          "DB_HOST" = "erpnext-db";
-          "DB_PORT" = "3306";
-        };
-        volumes = [
-          "/var/lib/erpnext/sites:/home/frappe/frappe-bench/sites"
-          "/var/lib/erpnext/logs:/home/frappe/frappe-bench/logs"
-        ];
-        extraOptions = [ "--network=frappe_network" ];
-        entrypoint = "/bin/bash";
-        
-        cmd = [ "-c" ''
-          # THE FIX: Create the JSON file if it doesn't exist so 'bench set-config' doesn't crash
-          if [ ! -f sites/common_site_config.json ]; then
-            echo "{}" > sites/common_site_config.json
-          fi
-  
-          ls -1 apps > sites/apps.txt;
-          bench set-config -g db_host erpnext-db;
-          bench set-config -gp db_port 3306;
-          bench set-config -g redis_cache redis://erpnext-redis-cache:6379;
-          bench set-config -g redis_queue redis://erpnext-redis-queue:6379;
-          bench set-config -g redis_socketio redis://erpnext-redis-queue:6379;
-          bench set-config -gp socketio_port 9000;
-          
-          if [ ! -d sites/frontend ]; then
-            echo "Waiting 15s for DB..."; sleep 15;
-            bench new-site frontend \
-              --db-host erpnext-db \
-              --mariadb-user-host-login-scope='%' \
-              --admin-password=${defaultPass} \
-              --db-root-username=root \
-              --db-root-password=${defaultPass} \
-              --install-app erpnext;
-          fi
-        '' ];
-      };
-  
+      # --- ERPNext App Components ---
       erpnext-backend = {
         image = frappeImage;
         dependsOn = [ "erpnext-db" "erpnext-redis-cache" "erpnext-redis-queue" ];
         environment = {
-          "DB_HOST" = "erpnext-db";
-          "DB_PORT" = "3306";
-          "MYSQL_ROOT_PASSWORD" = defaultPass;
-          "MARIADB_ROOT_PASSWORD" = defaultPass;
-          # RAM OPTIMIZATION: Force minimum worker count to save hundreds of MBs
           "GUNICORN_WORKERS" = "1";
           "GUNICORN_THREADS" = "2";
+          "GUNICORN_TIMEOUT" = "120";
         };
         volumes = [
           "/var/lib/erpnext/sites:/home/frappe/frappe-bench/sites"
@@ -126,7 +141,6 @@
           "FRAPPE_REDIS_CACHE" = "redis://erpnext-redis-cache:6379";
           "FRAPPE_REDIS_QUEUE" = "redis://erpnext-redis-queue:6379";
         };
-        # RAM OPTIMIZATION: Consolidated 3 workers into 1 container
         cmd = [ "bench" "worker" "--queue" "long,default,short" ]; 
         volumes = [
           "/var/lib/erpnext/sites:/home/frappe/frappe-bench/sites"
@@ -152,7 +166,6 @@
         environment = {
           "FRAPPE_REDIS_CACHE" = "redis://erpnext-redis-cache:6379";
           "FRAPPE_REDIS_QUEUE" = "redis://erpnext-redis-queue:6379";
-          # RAM OPTIMIZATION: Clamp Node.js memory limit to 128MB
           "NODE_OPTIONS" = "--max-old-space-size=128";
         };
         cmd = [ "node" "/home/frappe/frappe-bench/apps/frappe/socketio.js" ];
@@ -185,14 +198,28 @@
         extraOptions = [ "--network=frappe_network" ];
       };
     };
-    systemd.services."docker-erpnext-init" = {
-      after = [ "docker-network-frappe.service" ];
-      requires = [ "docker-network-frappe.service" ];
-      serviceConfig = {
-        Type = lib.mkForce "oneshot";
-        RemainAfterExit = lib.mkForce true;
-        Restart = lib.mkForce "no";
+  
+    # Merge the network creation service and the crash-loop suppressions into a single attribute set
+    systemd.services = {
+      "docker-network-frappe" = {
+        description = "Create frappe_network docker bridge";
+        wantedBy = [ "multi-user.target" ];
+        after = [ "docker.service" ];
+        requires = [ "docker.service" ];
+        serviceConfig = { Type = "oneshot"; RemainAfterExit = true; };
+        script = ''${pkgs.docker}/bin/docker network create frappe_network || true'';
       };
-    };
+    } // lib.genAttrs [
+      "docker-erpnext-backend"
+      "docker-erpnext-worker"
+      "docker-erpnext-scheduler"
+      "docker-erpnext-websocket"
+      "docker-erpnext-frontend"
+    ] (name: {
+      serviceConfig = {
+        Restart = lib.mkForce "always";
+        RestartSec = lib.mkForce "10s";
+      };
+    });
   };
 }
