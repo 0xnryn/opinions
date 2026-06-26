@@ -76,7 +76,7 @@ echo "Done! ERPNext is configured exclusively via the SOPS template."
 =============================================================================
 */
 {
-  flake.nixosModules.protoplast_tb_postgres = { config, pkgs, lib, inputs, ... }:
+  flake.nixosModules.protoplast_erpnext = { config, pkgs, lib, inputs, ... }:
   
   let
     frappeImage = "frappe/erpnext:v16.25.0";
