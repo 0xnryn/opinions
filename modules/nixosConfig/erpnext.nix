@@ -12,24 +12,28 @@ bootstrap the MariaDB database and create the site_config.json file.
 
 #!/usr/bin/env bash
 
-echo "Fetching ERPNext Secrets from RAM..."
-DB_PASS=$(sudo cat /run/secrets/erpnext_db_password)
-ADMIN_PASS=$(sudo cat /run/secrets/erpnext_admin_password)
+ENV_FILE="/run/secrets/erpnext.env"
 
-echo "Spinning up ephemeral configuration container..."
+# Source the env file to make variables available to this bash script
+set -a
+source $ENV_FILE
+set +a
+
+echo "Spinning up ephemeral configuration container for $SITE_NAME..."
 sudo docker run --rm \
   --network=frappe_network \
+  --env-file "$ENV_FILE" \
   -v /var/lib/erpnext/sites:/home/frappe/frappe-bench/sites \
   -v /var/lib/erpnext/logs:/home/frappe/frappe-bench/logs \
-  -e DB_PASS="$DB_PASS" \
-  -e ADMIN_PASS="$ADMIN_PASS" \
   frappe/erpnext:v16.25.0 \
   bash -c '
-    echo "Waiting for MariaDB and Redis..."
-    wait-for-it -t 120 erpnext-db:3306
-    wait-for-it -t 120 erpnext-redis-cache:6379
-    wait-for-it -t 120 erpnext-redis-queue:6379
-
+      echo "Waiting for MariaDB and Redis..."
+      wait-for-it -t 120 $DB_HOST:$DB_PORT
+      wait-for-it -t 120 $REDIS_CACHE
+      wait-for-it -t 120 $REDIS_QUEUE
+      
+      echo "Generating app list..."
+    
     echo "Generating app list..."
     ls -1 apps > sites/apps.txt
 
@@ -39,192 +43,196 @@ sudo docker run --rm \
     fi
 
     echo "Configuring common_site_config.json..."
-    bench set-config -g db_host erpnext-db
-    bench set-config -gp db_port 3306
-    bench set-config -g redis_cache "redis://erpnext-redis-cache:6379"
-    bench set-config -g redis_queue "redis://erpnext-redis-queue:6379"
-    bench set-config -g redis_socketio "redis://erpnext-redis-queue:6379"
+    bench set-config -g db_host $DB_HOST
+    bench set-config -gp db_port $DB_PORT
+    bench set-config -g redis_cache "redis://$REDIS_CACHE"
+    bench set-config -g redis_queue "redis://$REDIS_QUEUE"
+    bench set-config -g redis_socketio "redis://$REDIS_QUEUE"
     bench set-config -gp socketio_port 9000
 
-    if [ ! -d sites/frontend ]; then
-        echo "Creating new site (frontend)..."
-        bench new-site frontend \
+    if [ ! -d "sites/$SITE_NAME" ]; then
+        echo "Creating new site ($SITE_NAME)..."
+        bench new-site $SITE_NAME \
           --mariadb-user-host-login-scope="%" \
-          --admin-password="$ADMIN_PASS" \
+          --admin-password="$ADMIN_PASSWORD" \
           --db-root-username=root \
-          --db-root-password="$DB_PASS" \
+          --db-root-password="$DB_PASSWORD" \
           --install-app erpnext \
           --set-default
+          
+        echo "Fixing host_name for email links..."
+        bench --site $SITE_NAME set-config host_name "https://$SITE_NAME"
     else
-        echo "Site frontend already exists, skipping creation."
+        echo "Site $SITE_NAME already exists, skipping creation."
     fi
     
     echo "Initialization complete!"
   '
 
 echo "Restarting background ERPNext services to apply the new config..."
-sudo systemctl restart \
-  docker-erpnext-backend \
-  docker-erpnext-worker \
-  docker-erpnext-scheduler \
-  docker-erpnext-websocket \
-  docker-erpnext-frontend
+sudo systemctl restart docker-erpnext-*
 
-echo "Done! ERPNext should be spinning up normally now."
+echo "Done! ERPNext is configured exclusively via the SOPS template."
 =============================================================================
 */
 
+{ config, pkgs, lib, inputs, ... }:
+
+let
+  frappeImage = "frappe/erpnext:v16.25.0";
+  
+  # Define the keys exactly as they appear in your secrets.yaml
+  envKeys = [
+    "ERPNEXT_VERSION" "SITE_NAME" "ADMIN_PASSWORD" "DB_PASSWORD" 
+    "DB_HOST" "DB_PORT" "REDIS_CACHE" "REDIS_QUEUE"
+    "GUNICORN_THREADS" "GUNICORN_WORKERS" "GUNICORN_TIMEOUT"
+    "UPSTREAM_REAL_IP_ADDRESS" "UPSTREAM_REAL_IP_HEADER" 
+    "UPSTREAM_REAL_IP_RECURSIVE" "PROXY_READ_TIMEOUT" "CLIENT_MAX_BODY_SIZE"
+  ];
+in
 {
-  flake.nixosModules.protoplast_erpnext = { config, pkgs, lib, ... }:
-  let
-    frappeImage = "frappe/erpnext:v16.25.0";
-  in
-  {
-    systemd.tmpfiles.rules = [
-      "d /var/lib/erpnext/sites 0755 1000 1000 -"
-      "d /var/lib/erpnext/logs 0755 1000 1000 -"
-      "d /var/lib/erpnext/mysql 0755 999 999 -" 
-      "d /var/lib/erpnext/redis-queue 0755 1000 1000 -"
-    ];
+  # 1. Dynamically pull all secrets from SOPS
+  sops.secrets = lib.genAttrs (map (k: "protoplast_erpnext/${k}") envKeys) (name: {
+    sopsFile = "${inputs.self}/secrets/${config.networking.hostName}.yaml";
+    format = "yaml";
+  });
+
+  # 2. Dynamically build the .env file for Docker
+    sops.templates."erpnext.env".content = 
+      # Loop through the list and output KEY=${PLACEHOLDER}
+      lib.concatMapStringsSep "\n" 
+        (key: "${key}=${config.sops.placeholder."protoplast_erpnext/${key}"}") 
+        envKeys
+      # Append the specific alias mappings Frappe and MariaDB need
+      + ''
   
-    virtualisation.oci-containers.backend = "docker";
-    virtualisation.oci-containers.containers = {
+        # Internal Docker Aliases
+        MARIADB_ROOT_PASSWORD=${config.sops.placeholder."protoplast_erpnext/DB_PASSWORD"}
+        FRAPPE_SITE_NAME_HEADER=${config.sops.placeholder."protoplast_erpnext/SITE_NAME"}
+        BACKEND=erpnext-backend:8000
+        SOCKETIO=erpnext-websocket:9000
+        
+        # Worker & Websocket Redis Aliases
+        FRAPPE_REDIS_CACHE=redis://${config.sops.placeholder."protoplast_erpnext/REDIS_CACHE"}
+        FRAPPE_REDIS_QUEUE=redis://${config.sops.placeholder."protoplast_erpnext/REDIS_QUEUE"}
+        NODE_OPTIONS=--max-old-space-size=256
+      '';
+
+  # 3. Apply standard directory rules
+  systemd.tmpfiles.rules = [
+    "d /var/lib/erpnext/sites 0755 1000 1000 -"
+    "d /var/lib/erpnext/logs 0755 1000 1000 -"
+    "d /var/lib/erpnext/mysql 0755 999 999 -" 
+    "d /var/lib/erpnext/redis-queue 0755 1000 1000 -"
+  ];
   
-      # --- Persistence & Cache ---
-      erpnext-db = {
-        image = "mariadb:11.8";
-        # Mount the decrypted SOPS secret directly into the container
-        volumes = [ 
-          "/var/lib/erpnext/mysql:/var/lib/mysql" 
-          "/run/secrets/erpnext_db_password:/run/secrets/erpnext_db_password:ro"
-        ];
-        environment = {
-          "MARIADB_ROOT_PASSWORD_FILE" = "/run/secrets/erpnext_db_password";
-        };
-        cmd = [
-          "--character-set-server=utf8mb4"
-          "--collation-server=utf8mb4_unicode_ci"
-          "--skip-character-set-client-handshake"
-          "--innodb-buffer-pool-size=512M" 
-          "--max-connections=50"
-        ];
-        extraOptions = [ "--network=frappe_network" ];
-      };
-  
-      erpnext-redis-cache = {
-        image = "redis:6.2-alpine";
-        cmd = [ "redis-server" "--maxmemory" "128mb" "--maxmemory-policy" "allkeys-lru" ];
-        extraOptions = [ "--network=frappe_network" ];
-      };
-  
-      erpnext-redis-queue = {
-        image = "redis:6.2-alpine";
-        volumes = [ "/var/lib/erpnext/redis-queue:/data" ];
-        extraOptions = [ "--network=frappe_network" ];
-      };
-  
-      # --- ERPNext App Components ---
-      erpnext-backend = {
-        image = frappeImage;
-        dependsOn = [ "erpnext-db" "erpnext-redis-cache" "erpnext-redis-queue" ];
-        environment = {
-          "GUNICORN_WORKERS" = "3";
-          "GUNICORN_THREADS" = "4";
-          "GUNICORN_TIMEOUT" = "120";
-        };
-        volumes = [
-          "/var/lib/erpnext/sites:/home/frappe/frappe-bench/sites"
-          "/var/lib/erpnext/logs:/home/frappe/frappe-bench/logs"
-        ];
-        extraOptions = [ "--network=frappe_network" ];
-      };
-  
-      erpnext-worker = {
-        image = frappeImage;
-        dependsOn = [ "erpnext-backend" ];
-        environment = {
-          "FRAPPE_REDIS_CACHE" = "redis://erpnext-redis-cache:6379";
-          "FRAPPE_REDIS_QUEUE" = "redis://erpnext-redis-queue:6379";
-        };
-        cmd = [ "bench" "worker" "--queue" "long,default,short" ]; 
-        volumes = [
-          "/var/lib/erpnext/sites:/home/frappe/frappe-bench/sites"
-          "/var/lib/erpnext/logs:/home/frappe/frappe-bench/logs"
-        ];
-        extraOptions = [ "--network=frappe_network" ];
-      };
-  
-      erpnext-scheduler = {
-        image = frappeImage;
-        dependsOn = [ "erpnext-backend" ];
-        cmd = [ "bench" "schedule" ];
-        volumes = [
-          "/var/lib/erpnext/sites:/home/frappe/frappe-bench/sites"
-          "/var/lib/erpnext/logs:/home/frappe/frappe-bench/logs"
-        ];
-        extraOptions = [ "--network=frappe_network" ];
-      };
-  
-      erpnext-websocket = {
-        image = frappeImage;
-        dependsOn = [ "erpnext-backend" ];
-        environment = {
-          "FRAPPE_REDIS_CACHE" = "redis://erpnext-redis-cache:6379";
-          "FRAPPE_REDIS_QUEUE" = "redis://erpnext-redis-queue:6379";
-          "NODE_OPTIONS" = "--max-old-space-size=256";
-        };
-        cmd = [ "node" "/home/frappe/frappe-bench/apps/frappe/socketio.js" ];
-        volumes = [
-          "/var/lib/erpnext/sites:/home/frappe/frappe-bench/sites"
-          "/var/lib/erpnext/logs:/home/frappe/frappe-bench/logs"
-        ];
-        extraOptions = [ "--network=frappe_network" ];
-      };
-  
-      erpnext-frontend = {
-        image = frappeImage;
-        dependsOn = [ "erpnext-backend" "erpnext-websocket" ];
-        cmd = [ "nginx-entrypoint.sh" ];
-        environment = {
-          "BACKEND" = "erpnext-backend:8000";
-          "SOCKETIO" = "erpnext-websocket:9000";
-          "FRAPPE_SITE_NAME_HEADER" = "frontend";
-          "UPSTREAM_REAL_IP_ADDRESS" = "127.0.0.1";
-          "UPSTREAM_REAL_IP_HEADER" = "X-Forwarded-For";
-          "UPSTREAM_REAL_IP_RECURSIVE" = "off";
-          "PROXY_READ_TIMEOUT" = "120";
-          "CLIENT_MAX_BODY_SIZE" = "50m";
-        };
-        ports = [ "127.0.0.1:8080:8080" ];
-        volumes = [
-          "/var/lib/erpnext/sites:/home/frappe/frappe-bench/sites"
-          "/var/lib/erpnext/logs:/home/frappe/frappe-bench/logs"
-        ];
-        extraOptions = [ "--network=frappe_network" ];
-      };
+  # 4. The Containers (Now stripped of all explicit environment vars)
+  virtualisation.oci-containers.backend = "docker";
+  virtualisation.oci-containers.containers = {
+    
+    erpnext-db = {
+      image = "mariadb:11.8";
+      volumes = [ "/var/lib/erpnext/mysql:/var/lib/mysql" ];
+      environmentFiles = [ config.sops.templates."erpnext.env".path ];
+      cmd = [
+        "--character-set-server=utf8mb4"
+        "--collation-server=utf8mb4_unicode_ci"
+        "--skip-character-set-client-handshake"
+        "--innodb-buffer-pool-size=512M" 
+        "--max-connections=50"
+      ];
+      extraOptions = [ "--network=frappe_network" ];
     };
-  
-    # Merge the network creation service and the crash-loop suppressions into a single attribute set
-    systemd.services = {
-      "docker-network-frappe" = {
-        description = "Create frappe_network docker bridge";
-        wantedBy = [ "multi-user.target" ];
-        after = [ "docker.service" ];
-        requires = [ "docker.service" ];
-        serviceConfig = { Type = "oneshot"; RemainAfterExit = true; };
-        script = ''${pkgs.docker}/bin/docker network create frappe_network || true'';
-      };
-    } // lib.genAttrs [
-      "docker-erpnext-backend"
-      "docker-erpnext-worker"
-      "docker-erpnext-scheduler"
-      "docker-erpnext-websocket"
-      "docker-erpnext-frontend"
-    ] (name: {
-      serviceConfig = {
-        Restart = lib.mkForce "always";
-        RestartSec = lib.mkForce "10s";
-      };
-    });
+
+    erpnext-redis-cache = {
+      image = "redis:6.2-alpine";
+      cmd = [ "redis-server" "--maxmemory" "128mb" "--maxmemory-policy" "allkeys-lru" ];
+      extraOptions = [ "--network=frappe_network" ];
+    };
+
+    erpnext-redis-queue = {
+      image = "redis:6.2-alpine";
+      volumes = [ "/var/lib/erpnext/redis-queue:/data" ];
+      extraOptions = [ "--network=frappe_network" ];
+    };
+
+    erpnext-backend = {
+      image = frappeImage;
+      dependsOn = [ "erpnext-db" "erpnext-redis-cache" "erpnext-redis-queue" ];
+      environmentFiles = [ config.sops.templates."erpnext.env".path ];
+      volumes = [
+        "/var/lib/erpnext/sites:/home/frappe/frappe-bench/sites"
+        "/var/lib/erpnext/logs:/home/frappe/frappe-bench/logs"
+      ];
+      extraOptions = [ "--network=frappe_network" ];
+    };
+
+    erpnext-worker = {
+      image = frappeImage;
+      dependsOn = [ "erpnext-backend" ];
+      environmentFiles = [ config.sops.templates."erpnext.env".path ];
+      cmd = [ "bench" "worker" "--queue" "long,default,short" ]; 
+      volumes = [
+        "/var/lib/erpnext/sites:/home/frappe/frappe-bench/sites"
+        "/var/lib/erpnext/logs:/home/frappe/frappe-bench/logs"
+      ];
+      extraOptions = [ "--network=frappe_network" ];
+    };
+
+    erpnext-scheduler = {
+      image = frappeImage;
+      dependsOn = [ "erpnext-backend" ];
+      environmentFiles = [ config.sops.templates."erpnext.env".path ];
+      cmd = [ "bench" "schedule" ];
+      volumes = [
+        "/var/lib/erpnext/sites:/home/frappe/frappe-bench/sites"
+        "/var/lib/erpnext/logs:/home/frappe/frappe-bench/logs"
+      ];
+      extraOptions = [ "--network=frappe_network" ];
+    };
+
+    erpnext-websocket = {
+      image = frappeImage;
+      dependsOn = [ "erpnext-backend" ];
+      environmentFiles = [ config.sops.templates."erpnext.env".path ];
+      cmd = [ "node" "/home/frappe/frappe-bench/apps/frappe/socketio.js" ];
+      volumes = [
+        "/var/lib/erpnext/sites:/home/frappe/frappe-bench/sites"
+        "/var/lib/erpnext/logs:/home/frappe/frappe-bench/logs"
+      ];
+      extraOptions = [ "--network=frappe_network" ];
+    };
+
+    erpnext-frontend = {
+      image = frappeImage;
+      dependsOn = [ "erpnext-backend" "erpnext-websocket" ];
+      environmentFiles = [ config.sops.templates."erpnext.env".path ];
+      cmd = [ "nginx-entrypoint.sh" ];
+      ports = [ "127.0.0.1:8080:8080" ];
+      volumes = [
+        "/var/lib/erpnext/sites:/home/frappe/frappe-bench/sites"
+        "/var/lib/erpnext/logs:/home/frappe/frappe-bench/logs"
+      ];
+      extraOptions = [ "--network=frappe_network" ];
+    };
   };
+
+  systemd.services = {
+    "docker-network-frappe" = {
+      description = "Create frappe_network docker bridge";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "docker.service" ];
+      requires = [ "docker.service" ];
+      serviceConfig = { Type = "oneshot"; RemainAfterExit = true; };
+      script = ''${pkgs.docker}/bin/docker network create frappe_network || true'';
+    };
+  } // lib.genAttrs [
+    "docker-erpnext-backend"
+    "docker-erpnext-worker"
+    "docker-erpnext-scheduler"
+    "docker-erpnext-websocket"
+    "docker-erpnext-frontend"
+  ] (name: {
+    serviceConfig = { Restart = lib.mkForce "always"; RestartSec = lib.mkForce "10s"; };
+  });
 }
