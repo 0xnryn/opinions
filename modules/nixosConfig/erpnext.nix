@@ -88,7 +88,7 @@ echo "Done! ERPNext is configured exclusively via the SOPS template."
       "d /var/lib/erpnext/sites 0755 1000 1000 -"
       "d /var/lib/erpnext/logs 0755 1000 1000 -"
       "d /var/lib/erpnext/mysql 0755 999 999 -" 
-      "d /var/lib/erpnext/redis-queue 0755 1000 1000 -"
+      "d /var/lib/erpnext/redis-queue 0755 999 999 -" # Changed to 999
     ];
     
     # 3. The Containers
