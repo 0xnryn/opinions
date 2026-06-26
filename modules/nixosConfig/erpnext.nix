@@ -80,45 +80,15 @@ echo "Done! ERPNext is configured exclusively via the SOPS template."
   
   let
     frappeImage = "frappe/erpnext:v16.25.0";
-    
-    # Define the keys exactly as they appear in your secrets.yaml
-    envKeys = [
-      "ERPNEXT_VERSION" "SITE_NAME" "ADMIN_PASSWORD" "DB_PASSWORD" 
-      "DB_HOST" "DB_PORT" "REDIS_CACHE" "REDIS_QUEUE"
-      "GUNICORN_THREADS" "GUNICORN_WORKERS" "GUNICORN_TIMEOUT"
-      "UPSTREAM_REAL_IP_ADDRESS" "UPSTREAM_REAL_IP_HEADER" 
-      "UPSTREAM_REAL_IP_RECURSIVE" "PROXY_READ_TIMEOUT" "CLIENT_MAX_BODY_SIZE"
-    ];
   in
   {
-    # 1. Dynamically pull all secrets from SOPS
-    sops.secrets = lib.genAttrs (map (k: "protoplast_erpnext/${k}") envKeys) (name: {
-      sopsFile = "${inputs.self}/secrets/${config.networking.hostName}.yaml";
-      format = "yaml";
-    });
+    # 1. Pull the entire .env file as a single secret
+    sops.secrets."erpnext.env" = {
+      sopsFile = "${inputs.self}/secrets/${config.networking.hostName}_erpnext.env";
+      format = "dotenv";
+    };
   
-    # 2. Dynamically build the .env file for Docker
-      sops.templates."erpnext.env".content = 
-        # Loop through the list and output KEY=${PLACEHOLDER}
-        lib.concatMapStringsSep "\n" 
-          (key: "${key}=${config.sops.placeholder."protoplast_erpnext/${key}"}") 
-          envKeys
-        # Append the specific alias mappings Frappe and MariaDB need
-        + ''
-    
-          # Internal Docker Aliases
-          MARIADB_ROOT_PASSWORD=${config.sops.placeholder."protoplast_erpnext/DB_PASSWORD"}
-          FRAPPE_SITE_NAME_HEADER=${config.sops.placeholder."protoplast_erpnext/SITE_NAME"}
-          BACKEND=erpnext-backend:8000
-          SOCKETIO=erpnext-websocket:9000
-          
-          # Worker & Websocket Redis Aliases
-          FRAPPE_REDIS_CACHE=redis://${config.sops.placeholder."protoplast_erpnext/REDIS_CACHE"}
-          FRAPPE_REDIS_QUEUE=redis://${config.sops.placeholder."protoplast_erpnext/REDIS_QUEUE"}
-          NODE_OPTIONS=--max-old-space-size=256
-        '';
-  
-    # 3. Apply standard directory rules
+    # 2. Apply standard directory rules
     systemd.tmpfiles.rules = [
       "d /var/lib/erpnext/sites 0755 1000 1000 -"
       "d /var/lib/erpnext/logs 0755 1000 1000 -"
@@ -126,14 +96,15 @@ echo "Done! ERPNext is configured exclusively via the SOPS template."
       "d /var/lib/erpnext/redis-queue 0755 1000 1000 -"
     ];
     
-    # 4. The Containers (Now stripped of all explicit environment vars)
+    # 3. The Containers
     virtualisation.oci-containers.backend = "docker";
     virtualisation.oci-containers.containers = {
       
       erpnext-db = {
         image = "mariadb:11.8";
         volumes = [ "/var/lib/erpnext/mysql:/var/lib/mysql" ];
-        environmentFiles = [ config.sops.templates."erpnext.env".path ];
+        # Pass the decrypted file directly to Docker
+        environmentFiles = [ config.sops.secrets."erpnext.env".path ];
         cmd = [
           "--character-set-server=utf8mb4"
           "--collation-server=utf8mb4_unicode_ci"
@@ -159,7 +130,7 @@ echo "Done! ERPNext is configured exclusively via the SOPS template."
       erpnext-backend = {
         image = frappeImage;
         dependsOn = [ "erpnext-db" "erpnext-redis-cache" "erpnext-redis-queue" ];
-        environmentFiles = [ config.sops.templates."erpnext.env".path ];
+        environmentFiles = [ config.sops.secrets."erpnext.env".path ];
         volumes = [
           "/var/lib/erpnext/sites:/home/frappe/frappe-bench/sites"
           "/var/lib/erpnext/logs:/home/frappe/frappe-bench/logs"
@@ -170,7 +141,7 @@ echo "Done! ERPNext is configured exclusively via the SOPS template."
       erpnext-worker = {
         image = frappeImage;
         dependsOn = [ "erpnext-backend" ];
-        environmentFiles = [ config.sops.templates."erpnext.env".path ];
+        environmentFiles = [ config.sops.secrets."erpnext.env".path ];
         cmd = [ "bench" "worker" "--queue" "long,default,short" ]; 
         volumes = [
           "/var/lib/erpnext/sites:/home/frappe/frappe-bench/sites"
@@ -182,7 +153,7 @@ echo "Done! ERPNext is configured exclusively via the SOPS template."
       erpnext-scheduler = {
         image = frappeImage;
         dependsOn = [ "erpnext-backend" ];
-        environmentFiles = [ config.sops.templates."erpnext.env".path ];
+        environmentFiles = [ config.sops.secrets."erpnext.env".path ];
         cmd = [ "bench" "schedule" ];
         volumes = [
           "/var/lib/erpnext/sites:/home/frappe/frappe-bench/sites"
@@ -194,7 +165,7 @@ echo "Done! ERPNext is configured exclusively via the SOPS template."
       erpnext-websocket = {
         image = frappeImage;
         dependsOn = [ "erpnext-backend" ];
-        environmentFiles = [ config.sops.templates."erpnext.env".path ];
+        environmentFiles = [ config.sops.secrets."erpnext.env".path ];
         cmd = [ "node" "/home/frappe/frappe-bench/apps/frappe/socketio.js" ];
         volumes = [
           "/var/lib/erpnext/sites:/home/frappe/frappe-bench/sites"
@@ -206,7 +177,7 @@ echo "Done! ERPNext is configured exclusively via the SOPS template."
       erpnext-frontend = {
         image = frappeImage;
         dependsOn = [ "erpnext-backend" "erpnext-websocket" ];
-        environmentFiles = [ config.sops.templates."erpnext.env".path ];
+        environmentFiles = [ config.sops.secrets."erpnext.env".path ];
         cmd = [ "nginx-entrypoint.sh" ];
         ports = [ "127.0.0.1:8080:8080" ];
         volumes = [
