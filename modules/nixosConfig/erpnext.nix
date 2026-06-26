@@ -82,12 +82,7 @@ echo "Done! ERPNext is configured exclusively via the SOPS template."
     frappeImage = "frappe/erpnext:v16.25.0";
   in
   {
-    # 1. Pull the entire .env file as a single secret
-    sops.secrets."erpnext.env" = {
-      sopsFile = "${inputs.self}/secrets/${config.networking.hostName}_erpnext.env";
-      format = "dotenv";
-    };
-  
+
     # 2. Apply standard directory rules
     systemd.tmpfiles.rules = [
       "d /var/lib/erpnext/sites 0755 1000 1000 -"
