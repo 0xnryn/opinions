@@ -1,9 +1,4 @@
 /*
-
-# secrets/server.yaml
-erpnext_db_password: "your_secure_database_root_password_here"
-erpnext_admin_password: "your_secure_web_admin_password_here"
-
 =============================================================================
 ERPNext Initialization Script
 =============================================================================
@@ -25,7 +20,7 @@ sudo docker run --rm \
   --env-file "$ENV_FILE" \
   -v /var/lib/erpnext/sites:/home/frappe/frappe-bench/sites \
   -v /var/lib/erpnext/logs:/home/frappe/frappe-bench/logs \
-  frappe/erpnext:v16.25.0 \
+  frappe/erpnext:v16.26.1 \
   bash -c '
       echo "Waiting for MariaDB and Redis..."
       wait-for-it -t 120 $DB_HOST:$DB_PORT
@@ -79,7 +74,7 @@ echo "Done! ERPNext is configured exclusively via the SOPS template."
   flake.nixosModules.protoplast_erpnext = { config, pkgs, lib, inputs, ... }:
   
   let
-    frappeImage = "frappe/erpnext:v16.25.0";
+    frappeImage = "frappe/erpnext:v16.26.1";
   in
   {
 
@@ -133,11 +128,23 @@ echo "Done! ERPNext is configured exclusively via the SOPS template."
         extraOptions = [ "--network=frappe_network" ];
       };
   
-      erpnext-worker = {
+      erpnext-queue-long = {
         image = frappeImage;
         dependsOn = [ "erpnext-backend" ];
         environmentFiles = [ config.sops.secrets."erpnext.env".path ];
         cmd = [ "bench" "worker" "--queue" "long,default,short" ]; 
+        volumes = [
+          "/var/lib/erpnext/sites:/home/frappe/frappe-bench/sites"
+          "/var/lib/erpnext/logs:/home/frappe/frappe-bench/logs"
+        ];
+        extraOptions = [ "--network=frappe_network" ];
+      };
+
+      erpnext-queue-short = {
+        image = frappeImage;
+        dependsOn = [ "erpnext-backend" ];
+        environmentFiles = [ config.sops.secrets."erpnext.env".path ];
+        cmd = [ "bench" "worker" "--queue" "short,default" ]; 
         volumes = [
           "/var/lib/erpnext/sites:/home/frappe/frappe-bench/sites"
           "/var/lib/erpnext/logs:/home/frappe/frappe-bench/logs"
@@ -194,7 +201,8 @@ echo "Done! ERPNext is configured exclusively via the SOPS template."
       };
     } // lib.genAttrs [
       "docker-erpnext-backend"
-      "docker-erpnext-worker"
+      "docker-erpnext-queue-long"
+      "docker-erpnext-queue-short"
       "docker-erpnext-scheduler"
       "docker-erpnext-websocket"
       "docker-erpnext-frontend"
