@@ -68,6 +68,59 @@ echo "Restarting background ERPNext services to apply the new config..."
 sudo systemctl restart docker-erpnext-*
 
 echo "Done! ERPNext is configured exclusively via the SOPS template."
+
+
+After your NixOS server finishes the `nixos-rebuild switch`, the system will automatically pull the new `v16.26.1` images and recreate the containers based on your new module.
+
+However, because you updated the ERPNext version, you **must** run database migrations manually to apply any schema changes that come with the new version.
+
+Here are the exact commands you need to execute in your terminal:
+
+### 1. Verify the New Containers are Running
+
+First, ensure NixOS successfully spun up the new split-queue architecture and isn't stuck in a restart loop.
+
+```bash
+sudo docker ps -a
+
+```
+
+*Look for `erpnext-queue-long` and `erpnext-queue-short` in the names list, and ensure their status says "Up".*
+
+### 2. Run the Database Migration
+
+This is the most critical step of a version upgrade. It applies new database schemas and patches to your persistent MariaDB data.
+
+```bash
+sudo docker exec -it erpnext-backend bench --site erp.protoplast.in migrate
+
+```
+
+*(Note: If you have multiple sites or named your site folder differently inside the volume, replace `erp.protoplast.in` with the exact directory name inside `/var/lib/erpnext/sites`).*
+
+### 3. Clear the Cache
+
+Flush the Redis cache to ensure no old, compiled assets or outdated configuration states are served to the frontend.
+
+```bash
+sudo docker exec -it erpnext-backend bench --site erp.protoplast.in clear-cache
+
+```
+
+### 4. Restart the ERPNext Stack (Recommended)
+
+Because the background workers were running while you migrated the database, it is best practice to restart all the Frappe-related containers so they boot up cleanly against the freshly migrated database.
+
+Since NixOS is managing these via Systemd, use `systemctl` rather than standard Docker commands:
+
+```bash
+sudo systemctl restart docker-erpnext-*
+
+```
+
+Once that restart completes, your ERPNext instance will be fully upgraded to v16.26.1 and ready to use!
+
+sudo docker exec -it erpnext-backend bench --site erp.protoplast.in set-admin-password <your-new-password>
 =============================================================================
 */
 {
