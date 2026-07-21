@@ -1,6 +1,6 @@
 { ... }:
 {
-  flake.nixosModules.sudha-plasma = { pkgs, ... }:
+  flake.nixosModules.nryn-plasma = { pkgs, ... }:
   {
     services = {
       desktopManager.plasma6.enable = true;
